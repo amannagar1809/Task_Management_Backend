@@ -1,53 +1,90 @@
 const express = require('express');
 const router = express.Router();
+const Task = require('../models/Task');
+const { auth } = require('../middleware/auth');
 
-// In-memory storage for tasks (replace with database in production)
-let tasks = [];
-let nextId = 1;
+// GET /api/tasks - Get all tasks for logged-in user with pagination
+router.get('/', auth, async (req, res) => {
+  try {
+    const { page = 1, limit = 10 } = req.query;
+    const tasks = await Task.find({ assignedTo: req.user._id })
+      .sort({ dueDate: 1 })
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit));
+    const count = await Task.countDocuments({ assignedTo: req.user._id });
+    res.json({
+      tasks,
+      totalPages: Math.ceil(count / limit),
+      currentPage: parseInt(page)
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
-// GET /api/tasks - Get all tasks
-router.get('/', (req, res) => {
-  res.json(tasks);
+// GET /api/tasks/:id - Get task details
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const task = await Task.findOne({ _id: req.params.id, assignedTo: req.user._id });
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    res.json(task);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // POST /api/tasks - Create a new task
-router.post('/', (req, res) => {
-  const { text } = req.body;
-  if (!text) {
-    return res.status(400).json({ error: 'Task text is required' });
+router.post('/', auth, async (req, res) => {
+  try {
+    const { title, description, dueDate, priority } = req.body;
+    if (!title || !dueDate) {
+      return res.status(400).json({ error: 'Title and due date are required' });
+    }
+    const newTask = new Task({
+      title,
+      description,
+      dueDate,
+      priority: priority || 'medium',
+      status: 'pending',
+      assignedTo: req.user._id,
+      createdBy: req.user._id
+    });
+    await newTask.save();
+    res.status(201).json(newTask);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
   }
-  const newTask = {
-    id: nextId++,
-    text,
-    completed: false,
-    createdAt: new Date().toISOString()
-  };
-  tasks.push(newTask);
-  res.status(201).json(newTask);
 });
 
 // PUT /api/tasks/:id - Update a task
-router.put('/:id', (req, res) => {
-  const { id } = req.params;
-  const { text, completed } = req.body;
-  const task = tasks.find(t => t.id === parseInt(id));
-  if (!task) {
-    return res.status(404).json({ error: 'Task not found' });
+router.put('/:id', auth, async (req, res) => {
+  try {
+    const { title, description, dueDate, status, priority } = req.body;
+    const task = await Task.findOne({ _id: req.params.id, assignedTo: req.user._id });
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+
+    if (title !== undefined) task.title = title;
+    if (description !== undefined) task.description = description;
+    if (dueDate !== undefined) task.dueDate = dueDate;
+    if (status !== undefined) task.status = status;
+    if (priority !== undefined) task.priority = priority;
+
+    await task.save();
+    res.json(task);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
   }
-  if (text !== undefined) task.text = text;
-  if (completed !== undefined) task.completed = completed;
-  res.json(task);
 });
 
 // DELETE /api/tasks/:id - Delete a task
-router.delete('/:id', (req, res) => {
-  const { id } = req.params;
-  const index = tasks.findIndex(t => t.id === parseInt(id));
-  if (index === -1) {
-    return res.status(404).json({ error: 'Task not found' });
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const task = await Task.findOneAndDelete({ _id: req.params.id, assignedTo: req.user._id });
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    res.status(204).send();
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
   }
-  tasks.splice(index, 1);
-  res.status(204).send();
 });
 
 module.exports = router;
